@@ -46,10 +46,13 @@
 #include <fstream>
 #include <cmath>
 #include <time.h>
+#include <zmq.hpp>
 #include "common/utils/LOG/log.h"
 #include "common_lib.h"
 #include "assertions.h"
 #include "system.h"
+#include "zmq_connect.h"
+#include <assert.h>
 
 #include "common/utils/LOG/vcd_signal_dumper.h"
 
@@ -118,6 +121,7 @@ typedef struct {
 //}
 
 int check_ref_locked(usrp_state_t *s,size_t mboard) {
+  printf("check_ref_locked called");
   std::vector<std::string> sensor_names = s->usrp->get_mboard_sensor_names(mboard);
   bool ref_locked = false;
 
@@ -167,6 +171,7 @@ static int sync_to_gps(openair0_device *device) {
   //std::cout << boost::format("\nCreating the USRP device with: %s...\n") % args;
   //uhd::usrp::multi_usrp::sptr usrp = uhd::usrp::multi_usrp::make(args);
   //std::cout << boost::format("Using Device: %s\n") % usrp->get_pp_string();
+  printf("sync_to_gps called"); 
   usrp_state_t *s = (usrp_state_t *)device->priv;
 
   try {
@@ -267,7 +272,7 @@ static int sync_to_gps(openair0_device *device) {
 #define MAN_MASK ATR_MASK ^ 0xFFF // manually controlled pins
 
 static void trx_usrp_start_interdigital_gpio(openair0_device *device, usrp_state_t *s)
-{
+{ printf("trx_usrp_start_interdigital_gpio called");
   AssertFatal(device->type == USRP_X400_DEV,
               "interdigital frontend device for beam management can only be used together with an X400\n");
   // set data direction register (DDR) to output
@@ -284,6 +289,7 @@ static void trx_usrp_start_generic_gpio(openair0_device *device, usrp_state_t *s
 {
   // setup GPIO for TDD, GPIO(4) = ATR_RX
   // set data direction register (DDR) to output
+  printf("trx_usrp_start_generic_gpio called");
   s->usrp->set_gpio_attr(s->gpio_bank, "DDR", 0xfff, 0xfff);
   // set bits to be controlled automatically by ATR
   s->usrp->set_gpio_attr(s->gpio_bank, "CTRL", ATR_MASK, 0xfff);
@@ -300,6 +306,7 @@ static void trx_usrp_start_generic_gpio(openair0_device *device, usrp_state_t *s
     @param device pointer to the device structure specific to the RF hardware target
 */
 static int trx_usrp_start(openair0_device *device) {
+  printf("trx usrp start called");
   usrp_state_t *s = (usrp_state_t *)device->priv;
 
   s->gpio_bank = (char *) "FP0"; //good for B210, X310 and N310
@@ -348,11 +355,14 @@ static int trx_usrp_start(openair0_device *device) {
   cmd.stream_now = false; // start at constant delay
   s->rx_stream->issue_stream_cmd(cmd);
 
+  // initialize zmq parameters 
+
+
   return 0;
 }
 
 static void trx_usrp_send_end_of_burst(usrp_state_t *s)
-{
+{ printf("trx_usrp_send_end_of_burst called");
   // if last packet sent was end of burst no need to do anything. otherwise send end of burst packet
   if (s->tx_md.end_of_burst)
     return;
@@ -363,7 +373,7 @@ static void trx_usrp_send_end_of_burst(usrp_state_t *s)
 }
 
 static void trx_usrp_finish_rx(usrp_state_t *s)
-{
+{ printf("trx_usrp_finish_rx called ");
   /* finish rx by sending STREAM_MODE_STOP_CONTINUOUS */
   uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS);
   s->rx_stream->issue_stream_cmd(cmd);
@@ -384,6 +394,7 @@ static void trx_usrp_write_reset(openair0_thread_t *wt);
  * \param device the hardware to use
  */
 static void trx_usrp_end(openair0_device *device) {
+  printf("trx_usrp_end called");
   if (device == NULL)
     return;
 
@@ -429,6 +440,7 @@ static int trx_usrp_write(openair0_device *device,
 			  int nsamps,
 			  int cc,
 			  int flags) {
+  printf("trx_usrp_write called"); 
   int ret=0;
   usrp_state_t *s = (usrp_state_t *)device->priv;
   timestamp -= device->openair0_cfg->command_line_sample_advance + device->openair0_cfg->tx_sample_advance;
@@ -440,6 +452,19 @@ static int trx_usrp_write(openair0_device *device,
   int end;
   openair0_thread_t *write_thread = &device->write_thread;
   openair0_write_package_t *write_package = write_thread->write_package;
+
+  // --------------- ZMQ INITIALIZATION --------------------- //
+
+  //bool zmq_send_connection = 0 ; // zmq_connection is uninitialized 
+
+  //std::string zmq_send_address = "tcp://127.0.0.1:42079";
+  //zmq::context_t send_context; // initialize send context - everytime tx function is called  
+ 
+  //zmq::socket_t send_sock(send_context, zmq::socket_type::push);
+  //send_sock.bind(zmq_send_address); 
+
+  //---------------------------------------------------------- //
+
 
   AssertFatal( MAX_WRITE_THREAD_BUFFER_SIZE >= cc,"Do not support more than %d cc number\n", MAX_WRITE_THREAD_BUFFER_SIZE);
 
@@ -475,6 +500,7 @@ static int trx_usrp_write(openair0_device *device,
     }
 
     if (usrp_tx_thread == 0) {
+      printf("usrp_tx_thread = 0");
       nsamps2 = (nsamps+7)>>3;
       simde__m256i buff_tx[cc < 2 ? 2 : cc][nsamps2];
 
@@ -493,12 +519,13 @@ static int trx_usrp_write(openair0_device *device,
     s->tx_md.has_time_spec  = true;
     s->tx_md.start_of_burst = (s->tx_count==0) ? true : first_packet_state;
     s->tx_md.end_of_burst   = last_packet_state;
-    s->tx_md.time_spec      = uhd::time_spec_t::from_ticks(timestamp, s->sample_rate);
+    s->tx_md.time_spec      = uhd::time_spec_t::from_ticks(timestamp, s->sample_rate); // this might have to be edited 
     s->tx_count++;
 
 VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHING_GPIO,1);
     // bit 13 enables gpio 
     if ((flags_gpio & TX_GPIO_CHANGE) != 0) {
+      printf("flags_gpio & TX_GPIO_CHANGE) != 0");
       // push GPIO bits 
       s->usrp->set_command_time(s->tx_md.time_spec);
       s->usrp->set_gpio_attr(s->gpio_bank, "OUT", flags_gpio, MAN_MASK);
@@ -507,20 +534,39 @@ VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHI
 VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHING_GPIO,0);
 
     if (cc>1) {
+      printf("cc>1");
       std::vector<void *> buff_ptrs;
 
       for (int i=0; i<cc; i++)
         buff_ptrs.push_back(&(((int16_t *)buff_tx[i])[0]));
 
+      
+      printf("send called inside if");
+      
       ret = (int)s->tx_stream->send(buff_ptrs, nsamps, s->tx_md);
+
     }
     else {
-      ret = (int)s->tx_stream->send(&(((int16_t *)buff_tx[0])[0]), nsamps, s->tx_md);
-    }
+      //printf("send called inside else");
+      // modify this funciton to send data through zmq 
+      //printf("This is number of samples snet");
+      //printf("%d\n", nsamps); 
+      printf("sending sample buffer \n"); 
+      
+ 
+      //send_sock.send(zmq::mutable_buffer(&(((int16_t *)buff_tx[0])[0]),nsamps));
+      ret = (int)s->tx_stream->send(&(((int16_t *)buff_tx[0])[0]), nsamps, s->tx_md); 
+      //send_sock.close();
+      //send_context.shutdown();
+      //send_context.close(); 
+      
+      }
+    
 
     if (ret != nsamps) LOG_E(HW,"[xmit] tx samples %d != %d\n",ret,nsamps);
     return ret;
     } else {
+      printf("mutex lock");
       pthread_mutex_lock(&write_thread->mutex_write);
 
       if (write_thread->count_write >= MAX_WRITE_THREAD_PACKAGE) {
@@ -561,6 +607,7 @@ VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHI
       @param flags flags must be set to true if timestamp parameter needs to be applied
 */
 void *trx_usrp_write_thread(void * arg){
+  printf("trx_usrp_write_thread called");
   int ret=0;
   openair0_device *device=(openair0_device *)arg;
   openair0_thread_t *write_thread = &device->write_thread;
@@ -658,7 +705,7 @@ void *trx_usrp_write_thread(void * arg){
 }
 
 int trx_usrp_write_init(openair0_device *device){
-
+  printf("trx_usrp_write_init"); 
   //uhd::set_thread_priority_safe(1.0);
   openair0_thread_t *write_thread = &device->write_thread;
   printf("initializing tx write thread\n");
@@ -680,6 +727,7 @@ int trx_usrp_write_init(openair0_device *device){
 }
 
 static void trx_usrp_write_reset(openair0_thread_t *wt) {
+  printf("trx_usrp_write_reset called");
   pthread_mutex_lock(&wt->mutex_write);
   wt->count_write = 1;
   wt->write_thread_exit = true;
@@ -704,6 +752,7 @@ static void trx_usrp_write_reset(openair0_thread_t *wt) {
  * \returns the number of sample read
 */
 static int trx_usrp_read(openair0_device *device, openair0_timestamp *ptimestamp, void **buff, int nsamps, int cc) {
+  printf("trx_usrp_read called");
   usrp_state_t *s = (usrp_state_t *)device->priv;
   int samples_received=0;
   int nsamps2; // aligned to upper 32 or 16 byte boundary
@@ -813,6 +862,7 @@ static bool is_equal(double a, double b) {
 }
 
 void *freq_thread(void *arg) {
+  printf("freq_thread called");
   openair0_device *device=(openair0_device *)arg;
   usrp_state_t *s = (usrp_state_t *)device->priv;
   uhd::tune_request_t tx_tune_req(device->openair0_cfg[0].tx_freq[0],
@@ -830,7 +880,7 @@ void *freq_thread(void *arg) {
  * \returns 0 in success
  */
 int trx_usrp_set_freq(openair0_device *device, openair0_config_t *openair0_cfg)
-{
+{ printf("trx_usrp_set_freq called");
   usrp_state_t *s = (usrp_state_t *)device->priv;
   printf("Setting USRP TX Freq %f, RX Freq %f, tune_offset: %f\n", openair0_cfg[0].tx_freq[0], openair0_cfg[0].rx_freq[0], openair0_cfg[0].tune_offset);
 
@@ -848,6 +898,7 @@ int trx_usrp_set_freq(openair0_device *device, openair0_config_t *openair0_cfg)
  * \returns 0 in success
  */
 int openair0_set_rx_frequencies(openair0_device *device, openair0_config_t *openair0_cfg) {
+  printf("openair0_set_rx_frequencies called"); 
   usrp_state_t *s = (usrp_state_t *)device->priv;
   uhd::tune_request_t rx_tune_req(openair0_cfg[0].rx_freq[0], openair0_cfg[0].tune_offset);
   printf("In openair0_set_rx_frequencies, freq: %f, tune offset: %f\n",
@@ -865,6 +916,7 @@ int openair0_set_rx_frequencies(openair0_device *device, openair0_config_t *open
  */
 int trx_usrp_set_gains(openair0_device *device,
                        openair0_config_t *openair0_cfg) {
+  printf("trx_usrp_set_gains called");
   usrp_state_t *s = (usrp_state_t *)device->priv;
   ::uhd::gain_range_t gain_range_tx = s->usrp->get_tx_gain_range(0);
   s->usrp->set_tx_gain(gain_range_tx.stop()-openair0_cfg[0].tx_gain[0]);
@@ -889,6 +941,7 @@ int trx_usrp_set_gains(openair0_device *device,
  * \param card refers to the hardware index to use
  */
 int trx_usrp_stop(openair0_device *device) {
+  printf("trx_usrp_stop called");
   return(0);
 }
 
@@ -949,6 +1002,7 @@ rx_gain_calib_table_t calib_table_none[] = {
  * \returns 0 in success
  */
 void set_rx_gain_offset(openair0_config_t *openair0_cfg, int chain_index,int bw_gain_adjust) {
+  printf("set_rx_gain_offset called");
   int i=0;
   // loop through calibration table to find best adjustment factor for RX frequency
   double min_diff = 6e9,diff,gain_adj=0.0;
@@ -1009,6 +1063,7 @@ void set_rx_gain_offset(openair0_config_t *openair0_cfg, int chain_index,int bw_
 * \returns  0 on success
 */
 int trx_usrp_get_stats(openair0_device *device) {
+  printf("trx_usrp_get_stats called");
   return(0);
 }
 
@@ -1017,6 +1072,7 @@ int trx_usrp_get_stats(openair0_device *device) {
  * \returns  0 on success
  */
 int trx_usrp_reset_stats(openair0_device *device) {
+  printf("trx_usrp_reset_stats");
   return(0);
 }
 
@@ -1024,6 +1080,7 @@ int trx_usrp_reset_stats(openair0_device *device) {
  * devices are synched by octoclock */
 static void usrp_sync_pps(usrp_state_t *s)
 {
+  printf("usrp_sync_pps called");
   // First, wait for PPS.
   uhd::time_spec_t time_last_pps = s->usrp->get_time_last_pps();
 
@@ -1042,8 +1099,10 @@ static void usrp_sync_pps(usrp_state_t *s)
   LOG_I(HW, "USRP clock set to %f sec\n", tai_sec);
 }
 
+// Add zmq intiialization here and pass it to the functions 
 extern "C" {
   int device_init(openair0_device *device, openair0_config_t *openair0_cfg) {
+    printf("device_init called");
     LOG_I(HW, "openair0_cfg[0].sdr_addrs == '%s'\n", openair0_cfg[0].sdr_addrs);
     LOG_I(HW, "openair0_cfg[0].clock_source == '%d' (internal = %d, external = %d)\n", openair0_cfg[0].clock_source,internal,external);
     usrp_state_t *s ;
@@ -1058,7 +1117,22 @@ extern "C" {
       return 0;
     }
 
+  
+  //---------------------------------------------------------- //
+    
     device->openair0_cfg = openair0_cfg;
+
+    device->zmq_rx_address = "tcp://127.0.0.1:42079";
+    device->zmq_tx_address =  "tcp://127.0.0.1:42089" ;
+    
+    // Allocate contexts and sockets
+    device->zmq_rx_context = new zmq::context_t(1);
+    device->zmq_tx_context = new zmq::context_t(1);
+    
+    device->zmq_rx_sock = new zmq::socket_t(device->zmq_rx_context, zmq::socket_type::pull);
+    device->zmq_tx_sock = new zmq::socket_t(device->zmq_tx_context, zmq::socket_type::push);
+
+
     device->trx_start_func = trx_usrp_start;
     device->trx_get_stats_func = trx_usrp_get_stats;
     device->trx_reset_stats_func = trx_usrp_reset_stats;
