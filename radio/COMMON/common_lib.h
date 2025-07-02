@@ -38,6 +38,7 @@
 #include <openair1/PHY/TOOLS/tools_defs.h>
 #include "record_player.h"
 #include "common/utils/threadPool/notified_fifo.h"
+#include <zmq.hpp>
 
 /* default name of shared library implementing the radio front end */
 #define OAI_RF_LIBNAME        "oai_device"
@@ -102,7 +103,8 @@ typedef enum {
   /*!\brief device is UEDv2 */
   UEDv2_DEV,
   RFSIMULATOR,
-  MAX_RF_DEV_TYPE
+  MAX_RF_DEV_TYPE,
+  //ZMQ_RF_DEV
 } dev_type_t;
 /* list of names of devices, needs to match dev_type_t */
 
@@ -405,6 +407,9 @@ typedef struct {
 
 /*!\brief structure holds the parameters to configure USRP devices */
 struct openair0_device_t {
+
+  
+  
   /*!tx write thread*/
   openair0_thread_t write_thread;
 
@@ -454,13 +459,31 @@ struct openair0_device_t {
 
   /*!brief Used in ECPRI split 8 to indicate the TX/RX timing offset*/
   int txrx_offset;
+  
+  /*!brief Used to mark ZMQ RX/TX status */
+  bool zmq_tx_connnection ; 
+  bool zmq_rx_connection ; 
+
+
+  /*!brief ZMQ Contexts  */
+  zmq::context_t* zmq_rx_context ;  
+  zmq::context_t* zmq_tx_context ; 
+
+  /*!brief Addresses for ZMQ connections  */
+  std::string zmq_rx_address;
+  std::string zmq_tx_address;
+  
+  /*!brief ZMQ Sockets   */
+  zmq::socket_t* zmq_rx_sock;
+  zmq::socket_t* zmq_tx_sock;
+  
 
   /* Functions API, which are called by the application*/
 
   /*! \brief Called to start the transceiver. Return 0 if OK, < 0 if error
       @param device pointer to the device structure specific to the RF hardware target
   */
-  int (*trx_start_func)(openair0_device *device);
+  int (*trx_start_func)(openair0_device *device, );
 
  /*! \brief Called to configure the device
       @param device pointer to the device structure specific to the RF hardware target  
