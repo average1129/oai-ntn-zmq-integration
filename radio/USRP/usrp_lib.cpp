@@ -825,18 +825,24 @@ static int trx_usrp_read(openair0_device *device, openair0_timestamp *ptimestamp
             //device->zmq_tx_socket->send(zmq_md, zmq::send_flags::none);
             // Add meta data message as well 
 
-            device->zmq_rx_socket->recv(zmq_data_msg,zmq::recv_flags::none)
-            device->zmq_rx_socket->recv(zmq_md,zmq::recv_flags::none)
+            device->zmq_rx_socket->recv(zmq_data_msg,zmq::recv_flags::none) ;
+            device->zmq_rx_socket->recv(zmq_md,zmq::recv_flags::none) ;
 
-            samples_recieved = 
+
+            size_t new_samples_received = (zmq_msg.size()/(sizeof(int32_t)));  
+            // samples_recieved += (nsamps - sample_recieved );  // does this make sense?
+          
             //samples_received += s->rx_stream->recv((void*)((int32_t*)buff_tmp[0]+samples_received),
             //                                 nsamps-samples_received, s->rx_md);
-            
+            // copy from zmq buffer to usrp rx buffer
+            memcpy ((void*)((int32_t*)buff_tmp[0]+samples_received), zmq_msg.data(), samples_recieved) ;
             //ret = nsamps ;
+            samples_recieved += new_samples_recieved ;  // what does the nsamps - samples_recieved mean ? 
           }
           catch (const zmq::error_t& e) {
-            //std::cerr << "ZMQ send error (single channel + metadata): " << e.what() << std::endl;
+            std::cerr << "ZMQ recv error (single channel + metadata): " << e.what() << std::endl;
             //ret = -1;
+            // what happens to the return value ? 
            
       }
     }
