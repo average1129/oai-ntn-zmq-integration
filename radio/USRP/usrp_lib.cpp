@@ -396,6 +396,21 @@ static void trx_usrp_write_reset(openair0_thread_t *wt);
 static void trx_usrp_end(openair0_device *device) {
   printf("trx_usrp_end called");
   if (device == NULL)
+    // disconnect zmq connections
+
+    if (device->zmq_tx_sock)device->zmq_tx_sock.close();
+      //send_context.shutdown();
+      //send_context.close(); 
+    if (device->zmq_rx_sock)  device->zmq_rx_sock.close();
+    if (device->zmq_tx_ctx){
+      device->zmq_tx_ctx.shutdown();
+      device->zmq_tx_ctx.close();
+    } 
+    if (device->zmq_rx_ctx) delete device->zmq_rx_ctx{
+      device->zmq_rx_ctx.shutdown();
+      device->zmq_rx_ctx.close();
+    }
+
     return;
 
   usrp_state_t *s = (usrp_state_t *)device->priv;
@@ -453,19 +468,7 @@ static int trx_usrp_write(openair0_device *device,
   openair0_thread_t *write_thread = &device->write_thread;
   openair0_write_package_t *write_package = write_thread->write_package;
 
-  // --------------- ZMQ INITIALIZATION --------------------- //
-
-  //bool zmq_send_connection = 0 ; // zmq_connection is uninitialized 
-
-  //std::string zmq_send_address = "tcp://127.0.0.1:42079";
-  //zmq::context_t send_context; // initialize send context - everytime tx function is called  
  
-  //zmq::socket_t send_sock(send_context, zmq::socket_type::push);
-  //send_sock.bind(zmq_send_address); 
-
-  //---------------------------------------------------------- //
-
-
   AssertFatal( MAX_WRITE_THREAD_BUFFER_SIZE >= cc,"Do not support more than %d cc number\n", MAX_WRITE_THREAD_BUFFER_SIZE);
 
   bool first_packet_state=false,last_packet_state=false;
@@ -532,34 +535,50 @@ VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHI
       s->usrp->clear_command_time();
     }
 VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_BEAM_SWITCHING_GPIO,0);
-
-    if (cc>1) {
+n 
+  //multi channel case - implement later   
+  if (cc>1) {
       printf("cc>1");
       std::vector<void *> buff_ptrs;
 
       for (int i=0; i<cc; i++)
         buff_ptrs.push_back(&(((int16_t *)buff_tx[i])[0]));
-
       
-      printf("send called inside if");
-      
+        printf("send called inside if");
       ret = (int)s->tx_stream->send(buff_ptrs, nsamps, s->tx_md);
-
-    }
+      }
+    
     else {
-      //printf("send called inside else");
-      // modify this funciton to send data through zmq 
-      //printf("This is number of samples snet");
-      //printf("%d\n", nsamps); 
+      // single channel case  - currently called 
+      
       printf("sending sample buffer \n"); 
       
  
-      //send_sock.send(zmq::mutable_buffer(&(((int16_t *)buff_tx[0])[0]),nsamps));
-      ret = (int)s->tx_stream->send(&(((int16_t *)buff_tx[0])[0]), nsamps, s->tx_md); 
-      //send_sock.close();
-      //send_context.shutdown();
-      //send_context.close(); 
-      
+      if (device->zmq_tx_context && device->zmq_tx_socket){
+        
+          size_t tx_bytes = nsamps * sizeof(int16_t);
+          zmq::message_t zmq_data_msg((void *)(((int16_t *)buff_tx[0])), tx_bytes);
+          zmq::message_t zmq_md(sizeof(uhd::tx_metadata_t));
+          memcpy(zmq_meta_msg.data(), &(s->tx_md), sizeof(uhd::tx_metadata_t));
+
+          
+          
+          try {
+            // Send sample buffer first, with SNDMORE to indicate more parts follow
+            memcpy(zmq_data_msg.data(), buff_tx[0], iq_bytes);
+            device->zmq_tx_socket->send(zmq_data_msg, zmq::send_flags::sndmore);
+            device->zmq_tx_socket->send(zmq_md, zmq::send_flags::none);
+            // Add meta data message as well 
+            ret = nsamps ;
+          }
+          catch (const zmq::error_t& e) {
+            std::cerr << "ZMQ send error (single channel + metadata): " << e.what() << std::endl;
+            ret = -1;
+           
+      }
+      else {
+        // regular behavior - send directly to usrp 
+        ret = (int)s->tx_stream->send(&(((int16_t *)buff_tx[0])[0]), nsamps, s->tx_md);
       }
     
 
@@ -778,15 +797,54 @@ static int trx_usrp_read(openair0_device *device, openair0_timestamp *ptimestamp
 
     if (cc>1) {
       // receive multiple channels (e.g. RF A and RF B)
+      // write code for this later 
       std::vector<void *> buff_ptrs;
-
+      printf("Multi channel reception \n");
       for (int i=0; i<cc; i++) buff_ptrs.push_back(buff_tmp[i]+samples_received);
       samples_received += s->rx_stream->recv(buff_ptrs, nsamps-samples_received, s->rx_md);
     } else {
       // receive a single channel (e.g. from connector RF A)
+      printf("Single channel reception \n");
+      
+      if (device->zmq_rx_context && device->zmq_rx_socket){
+        
+          size_t rx_bytes = nsamps * sizeof(int16_t);
+          zmq::message_t zmq_data_msg;
+          zmq::message_t zmq_md; 
 
+          //zmq::message_t zmq_data_msg((void *)(((int16_t *)buff_tx[0])), tx_bytes);
+          //zmq::message_t zmq_md(sizeof(uhd::tx_metadata_t));
+          //memcpy(zmq_meta_msg.data(), &(s->tx_md), sizeof(uhd::tx_metadata_t));
+
+          
+          
+          try {
+            // Send sample buffer first, with SNDMORE to indicate more parts follow
+            //memcpy(zmq_data_msg.data(), buff_tx[0], iq_bytes);
+            //device->zmq_tx_socket->send(zmq_data_msg, zmq::send_flags::sndmore);
+            //device->zmq_tx_socket->send(zmq_md, zmq::send_flags::none);
+            // Add meta data message as well 
+
+            device->zmq_rx_socket->recv(zmq_data_msg,zmq::recv_flags::none)
+            device->zmq_rx_socket->recv(zmq_md,zmq::recv_flags::none)
+
+            samples_recieved = 
+            //samples_received += s->rx_stream->recv((void*)((int32_t*)buff_tmp[0]+samples_received),
+            //                                 nsamps-samples_received, s->rx_md);
+            
+            //ret = nsamps ;
+          }
+          catch (const zmq::error_t& e) {
+            //std::cerr << "ZMQ send error (single channel + metadata): " << e.what() << std::endl;
+            //ret = -1;
+           
+      }
+    }
+
+      else {
       samples_received += s->rx_stream->recv((void*)((int32_t*)buff_tmp[0]+samples_received),
                                              nsamps-samples_received, s->rx_md);
+      }
     }
     if  ((s->wait_for_first_pps == 0) && (s->rx_md.error_code!=uhd::rx_metadata_t::ERROR_CODE_NONE))
       break;
@@ -1129,9 +1187,13 @@ extern "C" {
     device->zmq_rx_context = new zmq::context_t(1);
     device->zmq_tx_context = new zmq::context_t(1);
     
-    device->zmq_rx_sock = new zmq::socket_t(device->zmq_rx_context, zmq::socket_type::pull);
-    device->zmq_tx_sock = new zmq::socket_t(device->zmq_tx_context, zmq::socket_type::push);
-
+    // debug and checik if object creation is happeneing properly 
+    device->zmq_rx_sock = new zmq::socket_t(*device->zmq_rx_context, zmq::socket_type::pull);
+    device->zmq_tx_sock = new zmq::socket_t(*device->zmq_tx_context, zmq::socket_type::push);
+  
+    // Bind ZMQ Rx & Tx Connections seperately 
+    device->zmq_tx_sock->bind(device->zmq_tx_address);
+    device->zmq_rx_sock->bind(device->zmq_rx_address);
 
     device->trx_start_func = trx_usrp_start;
     device->trx_get_stats_func = trx_usrp_get_stats;
